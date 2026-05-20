@@ -10,14 +10,11 @@ async function loadPhotos() {
   grid.innerHTML = '<div class="spinner"></div>';
 
   if (isSupabaseConfigured()) {
-    await initSupabase();
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('photos')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (!error) allPhotos = data;
-    } else {
+    try {
+      const res = await apiFetch('/rest/v1/photos?select=*&order=created_at.desc');
+      allPhotos = await res.json();
+    } catch (e) {
+      console.warn('加载照片失败，使用本地数据');
       allPhotos = DEMO_PHOTOS;
     }
   } else {
@@ -30,7 +27,7 @@ function renderPhotos() {
   const grid = document.getElementById('photoGrid');
 
   if (allPhotos.length === 0) {
-    grid.innerHTML = '<div class="photo-empty"><span class="icon">🖼</span><p>暂无照片，等待美好被记录</p></div>';
+    grid.innerHTML = '<div class="photo-empty"><span class="icon">🖼</span><p>还没有照片，去「我们的空间」上传吧</p></div>';
     return;
   }
 
@@ -98,38 +95,45 @@ async function uploadPhoto(file, caption) {
     return false;
   }
 
-  await initSupabase();
-  if (!supabase) {
-    showToast('数据库连接失败，请稍后重试', 'error');
+  const token = localStorage.getItem('love_story_token');
+  if (!token) {
+    showToast('请先登录再上传照片', 'error');
     return false;
   }
 
-  const fileName = `${Date.now()}-${file.name}`;
-  const { error: uploadError } = await supabase.storage
-    .from('photos')
-    .upload(fileName, file);
+  try {
+    // 1. Upload file to storage (needs auth token)
+    const fileName = `${Date.now()}-${file.name}`;
+    const uploadRes = await apiFetch(`/storage/v1/object/photos/${fileName}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: file,
+    });
+    // Check for upload error - Supabase returns the id in the response body on success
+    const uploadBody = await uploadRes.json();
+    if (uploadBody.error) {
+      showToast('上传失败: ' + uploadBody.error, 'error');
+      return false;
+    }
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/photos/${fileName}`;
 
-  if (uploadError) {
-    showToast('上传失败: ' + uploadError.message, 'error');
+    // 2. Save to database
+    await apiFetch('/rest/v1/photos', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Prefer': 'return=minimal',
+      },
+      body: { image_url: publicUrl, caption },
+    });
+
+    showToast('照片上传成功', 'success');
+    await loadPhotos();
+    return true;
+  } catch (e) {
+    showToast('上传失败: ' + e.message, 'error');
     return false;
   }
-
-  const { data: urlData } = supabase.storage
-    .from('photos')
-    .getPublicUrl(fileName);
-
-  const { error: dbError } = await supabase
-    .from('photos')
-    .insert({ image_url: urlData.publicUrl, caption });
-
-  if (dbError) {
-    showToast('保存失败: ' + dbError.message, 'error');
-    return false;
-  }
-
-  showToast('照片上传成功', 'success');
-  await loadPhotos();
-  return true;
 }
 
 // --- Init ---

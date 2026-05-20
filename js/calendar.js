@@ -14,14 +14,11 @@ function initCalendar() {
 
 async function loadEvents() {
   if (isSupabaseConfigured()) {
-    await initSupabase();
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('important_dates')
-        .select('*')
-        .order('event_date', { ascending: true });
-      if (!error) allEvents = data;
-    } else {
+    try {
+      const res = await apiFetch('/rest/v1/important_dates?select=*&order=event_date.asc');
+      allEvents = await res.json();
+    } catch (e) {
+      console.warn('加载纪念日失败，使用本地数据');
       allEvents = DEMO_EVENTS;
     }
   } else {
@@ -89,7 +86,7 @@ function showDateDetail(dateStr) {
 function renderEventList() {
   const list = document.getElementById('eventList');
   if (allEvents.length === 0) {
-    list.innerHTML = '<p style="text-align:center;color:var(--text-secondary);padding:20px 0;">还没有记录纪念日</p>';
+    list.innerHTML = '<p style="text-align:center;color:var(--text-secondary);padding:20px 0;">还没有记录纪念日，去「我们的空间」添加吧</p>';
     return;
   }
 

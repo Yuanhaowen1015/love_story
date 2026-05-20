@@ -18,17 +18,17 @@ async function sendMessage() {
   btn.textContent = '发送中...';
 
   if (isSupabaseConfigured()) {
-    await initSupabase();
-    if (supabase) {
-      const { error } = await supabase
-        .from('messages')
-        .insert({ author_name: author, content });
-      if (error) {
-        showToast('发送失败: ' + error.message, 'error');
-        btn.disabled = false;
-        btn.textContent = '发送悄悄话';
-        return;
-      }
+    try {
+      await apiFetch('/rest/v1/messages', {
+        method: 'POST',
+        headers: { 'Prefer': 'return=minimal' },
+        body: { author_name: author, content },
+      });
+    } catch (e) {
+      showToast('网络错误，发送失败', 'error');
+      btn.disabled = false;
+      btn.textContent = '发送悄悄话';
+      return;
     }
   } else {
     await new Promise(r => setTimeout(r, 400));
@@ -55,7 +55,8 @@ function showPasswordModal() {
   overlay.innerHTML = `
     <div class="modal">
       <h3>查看悄悄话</h3>
-      <p style="color:var(--text-secondary);font-size:0.88rem;">输入你们的共用密码来查看悄悄话</p>
+      <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:4px;">输入你们的共用登录密码</p>
+      <p style="color:var(--text-secondary);font-size:0.78rem;margin-bottom:12px;">（就是「我们的空间」登录用的那个密码）</p>
       <input type="password" id="viewMsgPassword" placeholder="输入密码">
       <div id="viewMsgError" style="color:#c0392b;font-size:0.85rem;margin-bottom:8px;display:none;"></div>
       <button class="btn-confirm" id="btnConfirmView">确认查看</button>
@@ -77,21 +78,25 @@ function showPasswordModal() {
     }
 
     if (isSupabaseConfigured()) {
-      await initSupabase();
-      if (supabase) {
-        const email = document.getElementById('loginEmail').value || localStorage.getItem('love_story_email') || '';
-        if (!email) {
-          errorEl.textContent = '请先在"我们的空间"页面登录';
-          errorEl.style.display = 'block';
-          return;
-        }
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-          errorEl.textContent = '密码错误，请重试';
-          errorEl.style.display = 'block';
-          return;
-        }
+      const email = document.getElementById('loginEmail').value || localStorage.getItem('love_story_email') || '';
+      if (!email) {
+        errorEl.textContent = '请先去「我们的空间」登录一次';
+        errorEl.style.display = 'block';
+        return;
+      }
+      try {
+        const res = await apiFetch('/auth/v1/token?grant_type=password', {
+          method: 'POST',
+          body: { email, password },
+        });
+        const data = await res.json();
+        localStorage.setItem('love_story_token', data.access_token);
+        localStorage.setItem('love_story_email', email);
         window.AppState.isLoggedIn = true;
+      } catch (e) {
+        errorEl.textContent = '密码错误，请重试';
+        errorEl.style.display = 'block';
+        return;
       }
     } else {
       if (password !== '123456') {
@@ -116,15 +121,22 @@ async function loadAndShowMessages() {
   list.classList.remove('hidden');
 
   if (isSupabaseConfigured()) {
-    await initSupabase();
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (!error) allMessages = data;
-    } else {
-      allMessages = DEMO_MESSAGES;
+    try {
+      // Use auth token to read messages
+      const token = localStorage.getItem('love_story_token');
+      let res;
+      if (token) {
+        res = await apiFetch('/rest/v1/messages?select=*&order=created_at.desc', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+      } else {
+        // Fallback: try with anon key (RLS may block this)
+        res = await apiFetch('/rest/v1/messages?select=*&order=created_at.desc');
+      }
+      allMessages = await res.json();
+    } catch (e) {
+      console.warn('加载留言失败');
+      allMessages = [];
     }
   } else {
     allMessages = DEMO_MESSAGES;

@@ -2,19 +2,6 @@
 // auth.js — 登录认证 & 管理后台
 // ============================================================
 
-async function initAuth() {
-  if (!isSupabaseConfigured()) return;
-  await initSupabase();
-  if (!supabase) return;
-
-  const { data } = await supabase.auth.getSession();
-  if (data.session) {
-    window.AppState.isLoggedIn = true;
-    window.AppState.session = data.session;
-    showLoggedInUI();
-  }
-}
-
 function showLoggedInUI() {
   document.getElementById('adminLoggedOut').classList.add('hidden');
   document.getElementById('adminLoggedIn').classList.remove('hidden');
@@ -37,15 +24,22 @@ async function login() {
   }
 
   if (isSupabaseConfigured()) {
-    await initSupabase();
-    if (supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        showToast('登录失败: ' + error.message, 'error');
+    try {
+      const res = await apiFetch('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        body: { email, password },
+      });
+      const data = await res.json();
+      if (data.error || !data.access_token) {
+        showToast('登录失败：邮箱或密码错误', 'error');
         return;
       }
+      localStorage.setItem('love_story_token', data.access_token);
+      localStorage.setItem('love_story_email', email);
       window.AppState.isLoggedIn = true;
-      window.AppState.session = data.session;
+    } catch (e) {
+      showToast('网络错误，登录失败', 'error');
+      return;
     }
   } else {
     if (password !== '123456') {
@@ -53,17 +47,16 @@ async function login() {
       return;
     }
     window.AppState.isLoggedIn = true;
+    localStorage.setItem('love_story_email', email);
   }
 
-  localStorage.setItem('love_story_email', email);
   showLoggedInUI();
   showToast('登录成功', 'success');
 }
 
-async function logout() {
-  if (isSupabaseConfigured() && supabase) {
-    await supabase.auth.signOut();
-  }
+function logout() {
+  localStorage.removeItem('love_story_token');
+  localStorage.removeItem('love_story_email');
   window.AppState.isLoggedIn = false;
   window.AppState.session = null;
   document.getElementById('loginEmail').value = '';
@@ -83,15 +76,23 @@ async function addImportantDate() {
   }
 
   if (isSupabaseConfigured()) {
-    await initSupabase();
-    if (supabase) {
-      const { error } = await supabase
-        .from('important_dates')
-        .insert({ title, event_date: eventDate, description });
-      if (error) {
-        showToast('保存失败: ' + error.message, 'error');
-        return;
-      }
+    const token = localStorage.getItem('love_story_token');
+    if (!token) {
+      showToast('请先登录', 'error');
+      return;
+    }
+    try {
+      await apiFetch('/rest/v1/important_dates', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Prefer': 'return=minimal',
+        },
+        body: { title, event_date: eventDate, description },
+      });
+    } catch (e) {
+      showToast('保存失败: ' + e.message, 'error');
+      return;
     }
   } else {
     DEMO_EVENTS.push({ id: Date.now(), title, event_date: eventDate, description, type: 'other' });
@@ -102,18 +103,24 @@ async function addImportantDate() {
   document.getElementById('adminDateValue').value = '';
   document.getElementById('adminDateDesc').value = '';
 
-  // Refresh calendar if events are loaded
-  if (typeof allEvents !== 'undefined') {
-    if (isSupabaseConfigured() && supabase) {
-      const { data } = await supabase
-        .from('important_dates')
-        .select('*')
-        .order('event_date', { ascending: true });
-      if (data) allEvents = data;
+  // Refresh calendar
+  await refreshEvents();
+}
+
+async function refreshEvents() {
+  if (typeof allEvents === 'undefined') return;
+
+  if (isSupabaseConfigured()) {
+    try {
+      const res = await apiFetch('/rest/v1/important_dates?select=*&order=event_date.asc');
+      allEvents = await res.json();
+    } catch (e) {
+      console.warn('刷新失败');
     }
-    if (typeof renderCalendar === 'function') renderCalendar();
-    if (typeof renderEventList === 'function') renderEventList();
   }
+
+  if (typeof renderCalendar === 'function') renderCalendar();
+  if (typeof renderEventList === 'function') renderEventList();
 }
 
 async function adminUploadPhoto() {
@@ -131,7 +138,12 @@ async function adminUploadPhoto() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  initAuth();
+  // Check if already logged in
+  const token = localStorage.getItem('love_story_token');
+  if (token) {
+    window.AppState.isLoggedIn = true;
+    showLoggedInUI();
+  }
 
   document.getElementById('btnLogin').addEventListener('click', login);
   document.getElementById('btnLogout').addEventListener('click', logout);
@@ -141,6 +153,4 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loginPassword').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') login();
   });
-
-  if (window.AppState.isLoggedIn) showLoggedInUI();
 });

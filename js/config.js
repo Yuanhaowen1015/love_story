@@ -14,63 +14,28 @@ const isSupabaseConfigured = () =>
   SUPABASE_URL !== 'https://your-project-id.supabase.co' &&
   SUPABASE_ANON_KEY !== 'your-anon-key-here';
 
-let supabase = null;
-
-// 动态加载 Supabase SDK（多 CDN 并发，哪个快用哪个，5秒超时）
-function loadSupabaseSDK() {
-  if (window.supabase) return Promise.resolve(window.supabase);
-
-  const CDN_URLS = [
-    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
-    'https://unpkg.com/@supabase/supabase-js@2',
-    'https://esm.sh/@supabase/supabase-js@2',
-  ];
-
-  return new Promise((resolve, reject) => {
-    let loaded = false;
-    const timer = setTimeout(() => {
-      if (!loaded) {
-        loaded = true;
-        reject(new Error('Supabase SDK 加载超时，将使用演示模式'));
-      }
-    }, 5000);
-
-    CDN_URLS.forEach(url => {
-      const script = document.createElement('script');
-      script.src = url;
-      script.onload = () => {
-        if (!loaded && window.supabase) {
-          loaded = true;
-          clearTimeout(timer);
-          resolve(window.supabase);
-        }
-      };
-      script.onerror = () => {
-        // 尝试下一个 CDN
-      };
-      document.head.appendChild(script);
-    });
-  });
+// 直接用 REST API，不依赖任何外部 SDK（国内也能用）
+async function apiFetch(path, options = {}) {
+  const headers = {
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+    ...options.headers,
+  };
+  // 文件上传（File/Blob）不转 JSON，让浏览器自动设 Content-Type
+  if (options.body && typeof options.body !== 'string' && !(options.body instanceof File) && !(options.body instanceof Blob)) {
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(options.body);
+  }
+  const res = await fetch(`${SUPABASE_URL}${path}`, { ...options, headers });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res;
 }
 
-// 初始化 Supabase 客户端（缓存 promise，只加载一次）
-let supabaseInitPromise = null;
-
+// 兼容旧的初始化调用
 async function initSupabase() {
   if (!isSupabaseConfigured()) return null;
-  if (supabase) return supabase;
-  if (supabaseInitPromise) return supabaseInitPromise;
-
-  supabaseInitPromise = (async () => {
-    try {
-      await loadSupabaseSDK();
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-      return supabase;
-    } catch (e) {
-      console.warn(e.message);
-      return null;
-    }
-  })();
-
-  return supabaseInitPromise;
+  return true;
 }
