@@ -17,15 +17,20 @@ async function sendMessage() {
   btn.disabled = true;
   btn.textContent = '发送中...';
 
+  let ok = false;
   if (isSupabaseConfigured()) {
     try {
-      await apiFetch('/rest/v1/messages', {
+      const res = await apiFetch('/rest/v1/messages', {
         method: 'POST',
         headers: { 'Prefer': 'return=minimal' },
         body: { author_name: author, content },
       });
+      if (res.ok) ok = true;
     } catch (e) {
-      showToast('网络错误，发送失败', 'error');
+      console.warn('留言发送异常:', e.message);
+    }
+    if (!ok) {
+      showToast('发送失败，请稍后重试', 'error');
       btn.disabled = false;
       btn.textContent = '发送悄悄话';
       return;
@@ -90,11 +95,17 @@ function showPasswordModal() {
           body: { email, password },
         });
         const data = await res.json();
+        if (!data.access_token) {
+          errorEl.textContent = '密码错误，请重试';
+          errorEl.style.display = 'block';
+          return;
+        }
         localStorage.setItem('love_story_token', data.access_token);
+        localStorage.setItem('love_story_refresh_token', data.refresh_token);
         localStorage.setItem('love_story_email', email);
         window.AppState.isLoggedIn = true;
       } catch (e) {
-        errorEl.textContent = '密码错误，请重试';
+        errorEl.textContent = '网络错误，请稍后重试';
         errorEl.style.display = 'block';
         return;
       }
@@ -122,20 +133,20 @@ async function loadAndShowMessages() {
 
   if (isSupabaseConfigured()) {
     try {
-      // Use auth token to read messages
       const token = localStorage.getItem('love_story_token');
+      // 加时间戳防止浏览器缓存
+      const cacheBuster = `&_t=${Date.now()}`;
       let res;
       if (token) {
-        res = await apiFetch('/rest/v1/messages?select=*&order=created_at.desc', {
+        res = await apiFetch(`/rest/v1/messages?select=*&order=created_at.desc${cacheBuster}`, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
       } else {
-        // Fallback: try with anon key (RLS may block this)
-        res = await apiFetch('/rest/v1/messages?select=*&order=created_at.desc');
+        res = await apiFetch(`/rest/v1/messages?select=*&order=created_at.desc${cacheBuster}`);
       }
       allMessages = await res.json();
     } catch (e) {
-      console.warn('加载留言失败');
+      console.warn('加载留言失败:', e.message);
       allMessages = [];
     }
   } else {

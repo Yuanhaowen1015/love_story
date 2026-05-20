@@ -14,28 +14,73 @@ const isSupabaseConfigured = () =>
   SUPABASE_URL !== 'https://your-project-id.supabase.co' &&
   SUPABASE_ANON_KEY !== 'your-anon-key-here';
 
-// 直接用 REST API，不依赖任何外部 SDK（国内也能用）
-async function apiFetch(path, options = {}) {
-  const headers = {
-    'apikey': SUPABASE_ANON_KEY,
-    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-    ...options.headers,
-  };
-  // 文件上传（File/Blob）不转 JSON，让浏览器自动设 Content-Type
-  if (options.body && typeof options.body !== 'string' && !(options.body instanceof File) && !(options.body instanceof Blob)) {
-    headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify(options.body);
+// 尝试用 refresh_token 换一个新 token
+async function tryRefreshToken() {
+  const refreshToken = localStorage.getItem('love_story_refresh_token');
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      // 刷新失败，清除旧 token，下次需要重新登录
+      localStorage.removeItem('love_story_token');
+      localStorage.removeItem('love_story_refresh_token');
+      return null;
+    }
+    const data = await res.json();
+    localStorage.setItem('love_story_token', data.access_token);
+    localStorage.setItem('love_story_refresh_token', data.refresh_token);
+    return data.access_token;
+  } catch (e) {
+    return null;
   }
-  const res = await fetch(`${SUPABASE_URL}${path}`, { ...options, headers });
+}
+
+// 统一的 API 请求函数，自动处理 token 过期
+async function apiFetch(path, options = {}) {
+  let token = localStorage.getItem('love_story_token');
+
+  async function doFetch(authToken) {
+    const headers = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${authToken || SUPABASE_ANON_KEY}`,
+      ...options.headers,
+    };
+    const body = (options.body && typeof options.body !== 'string' && !(options.body instanceof File) && !(options.body instanceof Blob))
+      ? JSON.stringify(options.body)
+      : options.body;
+
+    if (body && body !== options.body && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    return fetch(`${SUPABASE_URL}${path}`, { ...options, headers, body });
+  }
+
+  let res = await doFetch(token);
+
+  // 如果是 403/401 且我们有 token，尝试刷新
+  if ((res.status === 401 || res.status === 403) && token) {
+    const newToken = await tryRefreshToken();
+    if (newToken) {
+      res = await doFetch(newToken);  // 用新 token 重试
+    } else {
+      // 刷新失败，通知用户重新登录
+      window.AppState.isLoggedIn = false;
+      if (typeof showLoggedOutUI === 'function') showLoggedOutUI();
+    }
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res;
-}
-
-// 兼容旧的初始化调用
-async function initSupabase() {
-  if (!isSupabaseConfigured()) return null;
-  return true;
 }

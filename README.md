@@ -74,9 +74,10 @@ CREATE POLICY "public_read_photos" ON photos FOR SELECT USING (true);
 CREATE POLICY "auth_insert_photos" ON photos FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 CREATE POLICY "auth_delete_photos" ON photos FOR DELETE USING (auth.role() = 'authenticated');
 
--- 悄悄话：任何人写，登录读
+-- 悄悄话：任何人写，登录读+删
 CREATE POLICY "public_insert_messages" ON messages FOR INSERT WITH CHECK (true);
 CREATE POLICY "auth_read_messages" ON messages FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "auth_delete_messages" ON messages FOR DELETE USING (auth.role() = 'authenticated');
 
 -- ===== 存储桶权限策略 =====
 CREATE POLICY "public_read_storage" ON storage.objects
